@@ -1,0 +1,30 @@
+{
+	"name": "Local Development Container",
+	"features": {
+		"ghcr.io/devcontainers/features/aws-cli:1": {}
+	},
+	"customizations":{
+		"vscode": {
+			"settings": {
+				"cfnLint.path": "/workspace/.venv/bin/cfn-lint"
+			},
+			"extensions": [
+				"kddejong.vscode-cfn-lint"
+			]
+		}
+	},
+	"build": {
+		"dockerfile": "../Dockerfile"
+	},
+	"mounts": [
+		"source=${localEnv:HOME}/.aws/,target=/home/vscode/.aws/,type=bind,consistency=cached"
+	],
+	"workspaceFolder": "/workspace",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+	"postCreateCommand": {
+		"python": "uv sync"
+	},
+	"postStartCommand": {
+		"python": "uv run pre-commit install"
+	}
+}

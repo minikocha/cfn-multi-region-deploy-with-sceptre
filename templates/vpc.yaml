@@ -1,0 +1,938 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Environment:
+    Type: String
+
+  Project:
+    Type: String
+
+  ShortRegionCode:
+    Type: String
+
+  VpcCidrBlock:
+    Type: String
+    AllowedPattern: ^172\.(1[6-9]|2[0-9]|3[0-1])\.0.0/16
+    Description: Only class B networks(172.16.0.0/16 - 172.31.0.0/16) are allowed.
+
+Resources:
+
+  # ----------------------------------------------------------------------------------------------------
+  # VPC and associated resources
+  # ----------------------------------------------------------------------------------------------------
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidrBlock
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}
+
+  DhcpOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainNameServers:
+        - AmazonProvidedDNS
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}
+
+  VpcDhcpOptionsAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      DhcpOptionsId: !Ref DhcpOptions
+      VpcId: !Ref Vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  EgressOnlyInternetGateway:
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-egress-only
+      VpcId: !Ref Vpc
+
+  #FlowLog:
+  #  Type: AWS::EC2::FlowLog
+  #  Properties:
+
+  VpcIpv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      AmazonProvidedIpv6CidrBlock: true # /56 prefix
+      VpcId: !GetAtt Vpc.VpcId
+
+# Subnet design(IPv4)
+#                   | AZ1[00]                           | AZ2[01]                           | AZ3[10]                           |
+# | Public(0000)    | (0000)[00]00: 172.[16-31].0.0/22  | (0000)[01]00: 172.[16-31].4.0/22  | (0000)[10]00: 172.[16-31].8.0/22  |
+# | Private(0001)   | (0001)[00]00: 172.[16-31].16.0/22 | (0001)[01]00: 172.[16-31].20.0/22 | (0001)[10]00: 172.[16-31].24.0/22 |
+# | Protected(0010) | (0010)[00]00: 172.[16-31].32.0/22 | (0010)[01]00: 172.[16-31].36.0/22 | (0010)[10]00: 172.[16-31].40.0/22 |
+
+# Subnet design(IPv6)
+#                   | AZ1[0000]                      | AZ2[0001]                      | AZ3[0010]                      |
+# | Public(0000)    | ...(0000)[0000]: ...:xx00::/64 | ...(0000)[0001]: ...:xx01::/64 | ...(0000)[0010]: ...:xx02::/64 |
+# | Private(0001)   | ...(0001)[0000]: ...:xx10::/64 | ...(0001)[0001]: ...:xx11::/64 | ...(0001)[0010]: ...:xx12::/64 |
+# | Protected(0010) | ...(0010)[0000]: ...:xx20::/64 | ...(0010)[0001]: ...:xx21::/64 | ...(0010)[0010]: ...:xx22::/64 |
+
+  # ----------------------------------------------------------------------------------------------------
+  # Public subnets and associated resources
+  # ----------------------------------------------------------------------------------------------------
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [0, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [0, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].0.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [0, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx00::/64
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-public-1
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [1, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [1, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].4.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [1, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx01::/64
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-public-2
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [2, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [2, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].8.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [2, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx02::/64
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-public-3
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  PublicSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-public
+      VpcId: !GetAtt Vpc.VpcId
+
+  PublicSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicSubnetRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicSubnetRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicSubnetRouteTable
+      SubnetId: !Ref PublicSubnet3
+
+  PublicSubnetToInternetRouting:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicSubnetRouteTable
+
+  PublicSubnetToInternetIpv6Routing:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref EgressOnlyInternetGateway
+      RouteTableId: !Ref PublicSubnetRouteTable
+
+  PublicSubnetsNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      Tags:
+        - Value: Name
+          Key: !Sub ${Project}-${Environment}-${ShortRegionCode}-public
+      VpcId: !GetAtt Vpc.VpcId
+
+  PublicSubnetNaclAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref PublicSubnetsNacl
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnetNaclAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref PublicSubnetsNacl
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnetNaclAssociation3:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref PublicSubnetsNacl
+      SubnetId: !Ref PublicSubnet3
+
+  # ----------------------------------------------------------------------------------------------------
+  # Private subnets and associated resources
+  # ----------------------------------------------------------------------------------------------------
+  
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [0, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [4, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].16.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [16, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx10::/64
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private-1
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [1, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [5, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].20.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [17, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx11::/64
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private-2
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [2, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [6, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].24.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [18, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx12::/64
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private-3
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  PrivateSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private
+      VpcId: !GetAtt Vpc.VpcId
+
+  PrivateSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateSubnetRouteTable
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateSubnetRouteTable
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateSubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateSubnetRouteTable
+      SubnetId: !Ref PrivateSubnet3
+
+  PrivateSubnetToInternetIpv6Routing:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref EgressOnlyInternetGateway
+      RouteTableId: !Ref PrivateSubnetRouteTable
+
+  PrivateSubnetsNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      Tags:
+        - Value: Name
+          Key: !Sub ${Project}-${Environment}-${ShortRegionCode}-private
+      VpcId: !GetAtt Vpc.VpcId
+
+  PrivateSubnetNaclAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetsNacl
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnetNaclAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetsNacl
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateSubnetNaclAssociation3:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetsNacl
+      SubnetId: !Ref PrivateSubnet3
+
+  # ----------------------------------------------------------------------------------------------------
+  # Protected subnets and associated resources
+  # ----------------------------------------------------------------------------------------------------
+
+  ProtectedSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [0, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [8, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].32.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [32, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx20::/64
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected-1
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  ProtectedSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [1, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [9, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].36.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [33, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx21::/64
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected-2
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  ProtectedSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [2, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Select [10, !Cidr [!GetAtt Vpc.CidrBlock, 64, 10]] # NOTE: 172.[16-31].40.0/22
+      EnableDns64: true
+      Ipv6CidrBlock: !Select [34, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 256, 64]] # NOTE: ...:xx22::/64
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected-3
+      VpcId: !GetAtt Vpc.VpcId
+    DependsOn: VpcIpv6CidrBlock
+
+  ProtectedSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected
+      VpcId: !GetAtt Vpc.VpcId
+
+  ProtectedSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ProtectedSubnetRouteTable
+      SubnetId: !Ref ProtectedSubnet1
+
+  ProtectedSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ProtectedSubnetRouteTable
+      SubnetId: !Ref ProtectedSubnet2
+
+  ProtectedSubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ProtectedSubnetRouteTable
+      SubnetId: !Ref ProtectedSubnet3
+
+  ProtectedSubnetsNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      Tags:
+        - Value: Name
+          Key: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected
+      VpcId: !GetAtt Vpc.VpcId
+
+  ProtectedSubnetNaclAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref ProtectedSubnetsNacl
+      SubnetId: !Ref ProtectedSubnet1
+
+  ProtectedSubnetNaclAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref ProtectedSubnetsNacl
+      SubnetId: !Ref ProtectedSubnet2
+
+  ProtectedSubnetNaclAssociation3:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId: !Ref ProtectedSubnetsNacl
+      SubnetId: !Ref ProtectedSubnet3
+
+  # ----------------------------------------------------------------------------------------------------
+  # Public subnet nacl entries(Egress)
+  # ----------------------------------------------------------------------------------------------------
+
+  PublicSubnetEgressAllowIntercommunicationEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [0, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].0.0/20
+      Egress: true
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: allow
+      RuleNumber: 101
+
+  PublicSubnetEgressAllowIntercommunicationIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: true
+      Ipv6CidrBlock: !Select [0, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx00::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: allow
+      RuleNumber: 102
+
+  PublicSubnetEgressDenyToProtectedSubnetTrafficEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [2, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].32.0/20
+      Egress: true
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: deny
+      RuleNumber: 201
+
+  PublicSubnetEgressDenyToProtectedSubnetTrafficIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: true
+      Ipv6CidrBlock: !Select [2, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx20::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: deny
+      RuleNumber: 202
+
+  PublicSubnetEgressAllowPrivateSubnetTrafficTcpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [1, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].16.0/20
+      Egress: true
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 15001
+
+  PublicSubnetEgressAllowPrivateSubnetTrafficUdpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [1, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].16.0/20
+      Egress: true
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 15002
+
+  PublicSubnetEgressAllowPrivateSubnetTrafficTcpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: true
+      Ipv6CidrBlock: !Select [1, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx10::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 1023
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 15003
+
+  PublicSubnetEgressAllowPrivateSubnetTrafficUdpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: true
+      Ipv6CidrBlock: !Select [1, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx10::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 1023
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 15004
+
+  PublicSubnetEgressAllowInternetTrafficTcpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: true
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 25001
+
+  PublicSubnetEgressAllowInternetTrafficUdpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: true
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 25002
+
+  PublicSubnetEgressAllowInternetTrafficTcpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: true
+      Ipv6CidrBlock: ::0/0
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 25003
+
+  PublicSubnetEgressAllowIUnternetTrafficUdpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: true
+      Ipv6CidrBlock: ::0/0
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 25004
+
+  # ----------------------------------------------------------------------------------------------------
+  # Public subnet nacl entries(Ingress)
+  # ----------------------------------------------------------------------------------------------------
+
+  PublicSubnetIngressAllowIntercommunicationEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [0, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].0.0/20
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: allow
+      RuleNumber: 101
+
+  PublicSubnetIngressAllowIntercommunicationIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: !Select [0, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx00::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: allow
+      RuleNumber: 102
+
+  PublicSubnetIngressDenyToProtectedSubnetTrafficEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [2, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].32.0/20
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: deny
+      RuleNumber: 201
+
+  PublicSubnetIngressDenyToProtectedSubnetTrafficIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: !Select [2, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx20::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      Protocol: -1
+      RuleAction: deny
+      RuleNumber: 202
+
+  PublicSubnetIngressAllowFromPrivateSubnetTrafficTcpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [1, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].16.0/20
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 15001
+
+  PublicSubnetIngressAllowFromPrivateSubnetTrafficUdpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: !Select [1, !Cidr [!GetAtt Vpc.CidrBlock, 16, 12]] # NOTE: 172.[16-31].16.0/20
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 15002
+
+  PublicSubnetIngressAllowFromPrivateSubnetTrafficTcpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: !Select [1, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx10::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 1024
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 15003
+
+  PublicSubnetIngressAllowFromPrivateSubnetTrafficUdpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: !Select [1, !Cidr [ !Select [0, !GetAtt Vpc.Ipv6CidrBlocks], 16, 68]] # NOTE: ...:xx10::/60
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 1024
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 15004
+
+  PublicSubnetIngressDenySshAccessEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 22
+        To: 22
+      Protocol: 6
+      RuleAction: deny
+      RuleNumber: 20001
+
+  PublicSubnetIngressDenySshAccessIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: ::0/0
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 22
+        To: 22
+      Protocol: 6
+      RuleAction: deny
+      RuleNumber: 20002
+
+  PublicSubnetIngressDenyRdpAccessEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 3389
+        To: 3389
+      Protocol: 6
+      RuleAction: deny
+      RuleNumber: 20003
+
+  PublicSubnetIngressDenyRdpAccessIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: ::0/0
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 3389
+        To: 3389
+      Protocol: 6
+      RuleAction: deny
+      RuleNumber: 20004
+
+  PublicSubnetIngressAllowInternetTrafficTcpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 25001
+
+  PublicSubnetIngressAllowInternetTrafficUdpEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: false
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 25002
+
+  PublicSubnetIngressAllowInternetTrafficTcpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: ::0/0
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 6
+      RuleAction: allow
+      RuleNumber: 25003
+
+  PublicSubnetIngressAllowInternetTrafficUdpIpv6Entry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      Egress: false
+      Ipv6CidrBlock: ::0/0
+      NetworkAclId: !Ref PublicSubnetsNacl
+      PortRange:
+        From: 0
+        To: 65535
+      Protocol: 17
+      RuleAction: allow
+      RuleNumber: 25004
+
+  # ----------------------------------------------------------------------------------------------------
+  # Private subnet nacl entries(Egress)
+  # ----------------------------------------------------------------------------------------------------
+
+
+  # ----------------------------------------------------------------------------------------------------
+  # Gateway type vpc endpoints
+  # ----------------------------------------------------------------------------------------------------
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref PrivateSubnetRouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref Vpc
+
+  # ----------------------------------------------------------------------------------------------------
+  # Subnet groups
+  # ----------------------------------------------------------------------------------------------------
+
+  ProtectedDbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: ...
+      DBSubnetGroupName: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected
+      SubnetIds:
+        - !GetAtt ProtectedSubnet1.SubnetId
+        - !GetAtt ProtectedSubnet2.SubnetId
+        - !GetAtt ProtectedSubnet3.SubnetId
+
+  ProtectedElasticacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub ${Project}-${Environment}-${ShortRegionCode}-protected
+      Description: ...
+      SubnetIds:
+        - !GetAtt ProtectedSubnet1.SubnetId
+        - !GetAtt ProtectedSubnet2.SubnetId
+        - !GetAtt ProtectedSubnet3.SubnetId
+
+  # ----------------------------------------------------------------------------------------------------
+  # Elastic ip
+  # ----------------------------------------------------------------------------------------------------
+
+#  NatEIP1:
+#    DeletionPolicy: Retain
+#    UpdateReplacePolicy: Retain
+#    Type: AWS::EC2::EIP
+#    Properties:
+#      Tags:
+#        - Key: Name
+#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-1
+#
+#  NatEIP2:
+#    DeletionPolicy: Retain
+#    UpdateReplacePolicy: Retain
+#    Type: AWS::EC2::EIP
+#    Properties:
+#      Tags:
+#        - Key: Name
+#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-2
+#
+#  NatEIP3:
+#    DeletionPolicy: Retain
+#    UpdateReplacePolicy: Retain
+#    Type: AWS::EC2::EIP
+#    Properties:
+#      Tags:
+#        - Key: Name
+#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-3
+
+  # ----------------------------------------------------------------------------------------------------
+  # Outputs
+  # ----------------------------------------------------------------------------------------------------
+
+Outputs:
+  VpcCidrBlock:
+    Value: !GetAtt Vpc.CidrBlock
+
+  VpcIpv6CidrBlock:
+    Value: !Select [0, !GetAtt Vpc.Ipv6CidrBlocks]
+
+  VpcId:
+    Value: !GetAtt Vpc.VpcId
+
+  PublicSubnetCidrBlocks:
+    Value: !Join
+      - ","
+      - - !GetAtt PublicSubnet1.CidrBlock
+        - !GetAtt PublicSubnet2.CidrBlock
+        - !GetAtt PublicSubnet3.CidrBlock
+
+  PublicSubnetIpv6CidrBlocks:
+    Value: !Join
+      - ","
+      - - !Select [0, !GetAtt PublicSubnet1.Ipv6CidrBlocks]
+        - !Select [0, !GetAtt PublicSubnet2.Ipv6CidrBlocks]
+        - !Select [0, !GetAtt PublicSubnet3.Ipv6CidrBlocks]
+
+  PublicSubnetIds:
+    Value: !Join
+      - ","
+      - - !GetAtt PublicSubnet1.SubnetId
+        - !GetAtt PublicSubnet2.SubnetId
+        - !GetAtt PublicSubnet3.SubnetId
+
+  PublicSubnetRouteTableId:
+    Value: !GetAtt PublicSubnetRouteTable.RouteTableId
+
+  PrivateSubnetCidrBlocks:
+    Value: !Join
+      - ","
+      - - !GetAtt PrivateSubnet1.CidrBlock
+        - !GetAtt PrivateSubnet2.CidrBlock
+        - !GetAtt PrivateSubnet3.CidrBlock
+
+  PrivateSubnetIpv6CidrBlocks:
+    Value: !Join
+      - ","
+      - - !Select [0, !GetAtt PrivateSubnet1.Ipv6CidrBlocks]
+        - !Select [0, !GetAtt PrivateSubnet2.Ipv6CidrBlocks]
+        - !Select [0, !GetAtt PrivateSubnet3.Ipv6CidrBlocks]
+
+  PrivateSubnetIds:
+    Value: !Join
+      - ","
+      - - !GetAtt PrivateSubnet1.SubnetId
+        - !GetAtt PrivateSubnet2.SubnetId
+        - !GetAtt PrivateSubnet3.SubnetId
+
+  PrivateSubnetRouteTableId:
+    Value: !GetAtt PrivateSubnetRouteTable.RouteTableId
+
+  ProtectedSubnetCidrBlocks:
+    Value: !Join
+      - ","
+      - - !GetAtt ProtectedSubnet1.CidrBlock
+        - !GetAtt ProtectedSubnet2.CidrBlock
+        - !GetAtt ProtectedSubnet3.CidrBlock
+
+  ProtectedSubnetIpv6CidrBlocks:
+    Value: !Join
+      - ","
+      - - !Select [0, !GetAtt ProtectedSubnet1.Ipv6CidrBlocks]
+        - !Select [0, !GetAtt ProtectedSubnet2.Ipv6CidrBlocks]
+        - !Select [0, !GetAtt ProtectedSubnet3.Ipv6CidrBlocks]
+
+  ProtectedSubnetIds:
+    Value: !Join
+      - ","
+      - - !GetAtt ProtectedSubnet1.SubnetId
+        - !GetAtt ProtectedSubnet2.SubnetId
+        - !GetAtt ProtectedSubnet3.SubnetId
+
+  ProtectedSubnetRouteTableId:
+    Value: !GetAtt ProtectedSubnetRouteTable.RouteTableId
+
+  ProtectedDbSubnetGroupName:
+    Value: !Ref ProtectedDbSubnetGroup
+
+  ProtectedElasticacheSubnetGroupName:
+    Value: !Ref ProtectedElasticacheSubnetGroup
+
+#  NatEIPAllocationIds:
+#    Value: !Join 
+#      - ","
+#      - - !GetAtt NatEIP1.AllocationId
+#        - !GetAtt NatEIP2.AllocationId
+#        - !GetAtt NatEIP3.AllocationId

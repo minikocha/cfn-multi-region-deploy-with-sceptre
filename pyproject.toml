@@ -1,0 +1,13 @@
+[project]
+name = "cfn-multi-region-deploy-with-sceptre"
+version = "0.0.0"
+requires-python = ">=3.13.5"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "cfn-lint>=1.36.1",
+    "checkov>=2.2.231",
+    "pre-commit>=4.2.0",
+    "sceptre>=4.5.3",
+]

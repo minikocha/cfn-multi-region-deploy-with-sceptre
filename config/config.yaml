@@ -1,0 +1,4 @@
+project_code: {{ var.project_code }}
+stack_tags:
+  EnvironmentName: {{ var.environment }}
+  SceptreProject: {{ var.project_code }}

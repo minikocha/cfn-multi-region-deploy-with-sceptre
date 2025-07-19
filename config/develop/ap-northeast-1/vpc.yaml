@@ -1,0 +1,9 @@
+template:
+  path: vpc.yaml
+  type: file
+parameters:
+  Environment: {{ var.environment }}
+  Project: {{ var.project_code }}
+  ShortRegionCode: {{ var.short_region_code[stack_group_config.region] }}
+  VpcCidrBlock: {{ var.vpc_cidr_block[stack_group_config.region] }}
+stack_name: {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc
