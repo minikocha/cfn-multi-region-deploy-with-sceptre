@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Environment:
+    Type: String
+
+  ImageId:
+    Description: |
+      The ID of the AMI.
+      Must specify AMI with ARM64 architecture from Canonical's public parameters.
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server-minimal/25.04/stable/20250805/arm64/hvm/ebs-gp3/ami-id
+
+  InstanceType:
+    Description: |
+      Instance type of NAT instances.
+      Must specify AWS Graviton-based instance type.
+    Type: String
+    Default: t4g.nano
+
+  NatEipAllocationIdList:
+    Type: List<String>
+
+  Project:
+    Type: String
+
+  RouteTableIdList:
+    Description: |
+      A list of route table IDs to add the route to internet.
+      If NatEipAllocationIdList has length 3, then this list must have length 3.
+    Type: List<String>
+
+  ShortRegionCode:
+    Type: String
+
+  SubnetIdList: 
+    Description: |
+      A list of subnet IDs in which to launch the NAT instance.
+      The length of the list must be 3.
+    Type: List<AWS::EC2::Subnet::Id>
+
+  VpcCidrBlock:
+    Type: String
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  VpcIpv6CidrBlock:
+    Type: String
+
+#Rulesの中で"Fn::Length"が使用できない。※おそらくTransformより先にRulesが実行されるから
+#Rules:
+#  NatEipAllocationIdListHasLength1Or3:
+#    Assertions:
+#      - Assert: !Or
+#          - !Equals [1, Fn::Length: !Ref NatEipAllocationIdList]
+#          - !Equals [3, Fn::Length: !Ref NatEipAllocationIdList]
+#        AssertDescription: "NatEipAllocationIdList length must be 1 or 3."
+
+#  SubnetIdListHasLength3:
+#    Assertions:
+#      - Assert: !Equals [3, Fn::Length: !Ref SubnetIdList]
+#        AssertDescription: SubnetIdList length must be 3
+#
+#  RuleName3:
+#    RuleCondition: !Equals [3, Fn::Length: !Ref NatEipAllocationIdList]
+#    Assertions:
+#      - Assert: !And
+#          - !Equals [3, Fn::Length: !Ref NatEipAllocationIdList]
+#          - !Equals [3, Fn::Length: !Ref RouteTableIdList]
+#        AssertDescription: When the length of NatEipAllocationIdList is 3, the length of RouteTableIdList must also be 3.
+
+Conditions:
+  NatEipAllocationIdListHasLength3: !Equals [3, Fn::Length: !Ref NatEipAllocationIdList]
+
+Transform:
+  - AWS::LanguageExtensions
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for NAT instances
+      GroupName: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat
+      SecurityGroupIngress:
+        - CidrIp: !Ref VpcCidrBlock
+          Description: Traffic from within a VPC
+          IpProtocol: -1
+        - CidrIpv6: !Ref VpcIpv6CidrBlock
+          Description: Traffic from within a VPC
+          IpProtocol: -1
+        - CidrIp: 0.0.0.0/0
+          Description: Return traffic from the Internet(TCP)
+          FromPort: 1024
+          IpProtocol: tcp
+          ToPort: 65535
+        - CidrIpv6: ::0/0
+          Description: Return traffic from the Internet(TCP)
+          FromPort: 1024
+          IpProtocol: tcp
+          ToPort: 65535
+        - CidrIp: 0.0.0.0/0
+          Description: Return traffic from the Internet(UDP)
+          FromPort: 1024
+          IpProtocol: udp
+          ToPort: 65535
+        - CidrIpv6: ::0/0
+          Description: Return traffic from the Internet(UDP)
+          FromPort: 1024
+          IpProtocol: udp
+          ToPort: 65535
+        - CidrIp: 0.0.0.0/0
+          Description: Return traffic from the Internet(TCP/DNS)
+          FromPort: 53
+          IpProtocol: tcp
+          ToPort: 53
+        - CidrIp: 0.0.0.0/0
+          Description: Return traffic from the Internet(UDP/DNS)
+          FromPort: 53
+          IpProtocol: udp
+          ToPort: 53
+        - CidrIpv6: ::0/0
+          Description: Return IPv6 traffic from the Internet(TCP/DNS)
+          FromPort: 53
+          IpProtocol: tcp
+          ToPort: 53
+        - CidrIpv6: ::0/0
+          Description: Return IPv6 traffic from the Internet(UDP/DNS)
+          FromPort: 53
+          IpProtocol: udp
+          ToPort: 53
+      VpcId: !Ref VpcId
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: !Sub "ec2.${AWS::URLSuffix}"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      PermissionsBoundary: arn:aws:iam::308307205114:policy/security-boundary-policy # TODO(minikocha): 後で項目ごと削除
+      RoleName: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Ref Role
+      Roles:
+        - !Ref Role
+
+  # NOTE: Use AWS::EC2::Instance. AWS::EC2::LaunchTemplate will replace the instance if there is a change.
+
+  NatInstance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !Ref ImageId
+      InstanceType: t4g.nano
+      MetadataOptions:
+        HttpProtocolIpv6: enabled
+        HttpTokens: required
+        InstanceMetadataTags: enabled
+      #Monitoring: true
+      PropagateTagsToVolumeOnCreation: true
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      SourceDestCheck: false
+      SubnetId: !Select [0, !Ref SubnetIdList]
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat-1
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          sudo apt update \
+            && sudo apt -y install iptables
+          #iptables-persistent
+          sudo sysctl -w net.ipv4.ip_forward=1
+          PRIMARY_INTERFACE=$(ip -o -4 route show to default | awk '{print $5}')
+          /sbin/iptables -t nat -A POSTROUTING -o $PRIMARY_INTERFACE -j MASQUERADE
+          iptables-save >/etc/iptables/rules.v4
+
+#  EIPAssociation1:
+#    Type: AWS::EC2::EIPAssociation
+#    Properties:
+#      AllocationId: !Select [0, !Ref NatEipAllocationIdList]
+#      InstanceId: !Ref NatInstance1
+#
+#  Route1:
+#    Type: AWS::EC2::Route
+#    Properties:
+#      DestinationCidrBlock: 0.0.0.0/0
+#      InstanceId: !Ref NatInstance1
+#      RouteTableId: !Select [0, !Ref RouteTableIdList]
+#
+#  NatInstance2:
+#    Type: AWS::EC2::Instance
+#    Properties:
+#      IamInstanceProfile: !Ref InstanceProfile
+#      ImageId: !Ref ImageId
+#      InstanceType: t4g.nano
+#      MetadataOptions:
+#        HttpProtocolIpv6: enabled
+#        HttpTokens: required
+#        InstanceMetadataTags: enabled
+#      #Monitoring: true
+#      PropagateTagsToVolumeOnCreation: true
+#      SecurityGroupIds:
+#        - !GetAtt SecurityGroup.GroupId
+#      SourceDestCheck: false
+#      SubnetId: !Select [1, !Ref SubnetIdList]
+#      Tags:
+#        - Key: Name
+#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat-2
+#      UserData:
+#        Fn::Base64: |
+#          #!/bin/bash
+#          sudo apt update \
+#            && sudo apt -y install iptables
+#          #iptables-persistent
+#          sudo sysctl -w net.ipv4.ip_forward=1
+#          PRIMARY_INTERFACE=$(ip -o -4 route show to default | awk '{print $5}')
+#          /sbin/iptables -t nat -A POSTROUTING -o $PRIMARY_INTERFACE -j MASQUERADE
+#          iptables-save >/etc/iptables/rules.v4
+#    Condition: NatEipAllocationIdListHasLength3
+#
+#  EIPAssociation2:
+#    Type: AWS::EC2::EIPAssociation
+#    Properties:
+#      AllocationId: !Select [1, !Ref NatEipAllocationIdList]
+#      InstanceId: !Ref NatInstance2
+#    Condition: NatEipAllocationIdListHasLength3
+#
+#  Route2:
+#    Type: AWS::EC2::Route
+#    Properties:
+#      DestinationCidrBlock: 0.0.0.0/0
+#      InstanceId: !Ref NatInstance2
+#      RouteTableId: !Select [1, !Ref RouteTableIdList]
+#    Condition: NatEipAllocationIdListHasLength3
+#
+#  NatInstance3:
+#    Type: AWS::EC2::Instance
+#    Properties:
+#      IamInstanceProfile: !Ref InstanceProfile
+#      ImageId: !Ref ImageId
+#      InstanceType: t4g.nano
+#      MetadataOptions:
+#        HttpProtocolIpv6: enabled
+#        HttpTokens: required
+#        InstanceMetadataTags: enabled
+#      #Monitoring: true
+#      PropagateTagsToVolumeOnCreation: true
+#      SecurityGroupIds:
+#        - !GetAtt SecurityGroup.GroupId
+#      SourceDestCheck: false
+#      SubnetId: !Select [2, !Ref SubnetIdList]
+#      Tags:
+#        - Key: Name
+#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat-3
+#      UserData:
+#        Fn::Base64: |
+#          #!/bin/bash
+#          sudo apt update \
+#            && sudo apt -y install iptables
+#          #iptables-persistent
+#          sudo sysctl -w net.ipv4.ip_forward=1
+#          PRIMARY_INTERFACE=$(ip -o -4 route show to default | awk '{print $5}')
+#          /sbin/iptables -t nat -A POSTROUTING -o $PRIMARY_INTERFACE -j MASQUERADE
+#          iptables-save >/etc/iptables/rules.v4
+#    Condition: NatEipAllocationIdListHasLength3
+#
+#  EIPAssociation3:
+#    Type: AWS::EC2::EIPAssociation
+#    Properties:
+#      AllocationId: !Select [2, !Ref NatEipAllocationIdList]
+#      InstanceId: !Ref NatInstance3
+#    Condition: NatEipAllocationIdListHasLength3
+#
+#  Route3:
+#    Type: AWS::EC2::Route
+#    Properties:
+#      DestinationCidrBlock: 0.0.0.0/0
+#      InstanceId: !Ref NatInstance3
+#      RouteTableId: !Select [2, !Ref RouteTableIdList]
+#    Condition: NatEipAllocationIdListHasLength3
+
+  # TODO(minikocha): テストが終わったら消す
+  TestInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !Ref ImageId
+      InstanceType: t4g.nano
+      PropagateTagsToVolumeOnCreation: true
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      SubnetId: subnet-0b8b212d18b2cd3aa 
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-test

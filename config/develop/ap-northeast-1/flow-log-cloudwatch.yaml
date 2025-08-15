@@ -1,0 +1,11 @@
+template:
+  path: flow-log-cloudwatch.yaml
+  type: file
+dependencies:
+  - {{ var.environment }}/{{ stack_group_config.region }}/vpc.yaml
+parameters:
+  Environment: {{ var.environment }}
+  Project: {{ var.project_code }}
+  ShortRegionCode: {{ var.short_region_code[stack_group_config.region] }}
+  VpcId: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::VpcId
+stack_name: {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-flow-log-cloudwatch

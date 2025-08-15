@@ -1,0 +1,16 @@
+template:
+  path: nat-instance.yaml
+  type: file
+dependencies:
+  - {{ var.environment }}/{{ stack_group_config.region }}/vpc.yaml
+parameters:
+  Environment: {{ var.environment }}
+  NatEipAllocationIdList: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::NatEipAllocationIdList
+  Project: {{ var.project_code }}
+  RouteTableIdList: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::PrivateSubnetRouteTableIdList
+  ShortRegionCode: {{ var.short_region_code[stack_group_config.region] }}
+  SubnetIdList: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::PublicSubnetIdList
+  VpcCidrBlock: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::VpcCidrBlock
+  VpcId: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::VpcId
+  VpcIpv6CidrBlock: !stack_output_external {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-vpc::VpcIpv6CidrBlock
+stack_name: {{ var.project_code }}-{{ var.environment }}-{{ var.short_region_code[stack_group_config.region] }}-nat-instance

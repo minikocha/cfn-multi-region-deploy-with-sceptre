@@ -72,6 +72,7 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
+          # TODO(minikocha): 特定の権限を持つ人以外から削除・変更されないようポリシーを設定する。
           #- Effect: "Deny"
           #  Principal:
           #    AWS: "*"
@@ -92,7 +93,6 @@ Resources:
           #    - "s3:DeleteObjectVersion"
           #  Resource:
           #    - !Sub "${FlowLogStorageBucket.Arn}/AWSLogs/${AWS::AccountId}/*"
-          
           # https://docs.aws.amazon.com/ja_jp/vpc/latest/userguide/flow-logs-s3-permissions.html
           - Effect: "Allow"
             Principal:
@@ -133,5 +133,5 @@ Resources:
       ResourceType: !Ref ResourceType
       Tags:
         - Key: Name
-          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-s3
       TrafficType: !Ref TrafficType

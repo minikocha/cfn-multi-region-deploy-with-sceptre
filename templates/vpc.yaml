@@ -4,16 +4,28 @@ Parameters:
   Environment:
     Type: String
 
+  NatEipAllocationCount:
+    Description: The number of Elastic IP addresses to allocate for NAT.
+    Type: Number
+    AllowedValues:
+      - 1
+      - 3
+    Default: 1
+
   Project:
     Type: String
 
   ShortRegionCode:
+    Description: Abbreviated region code(e.g. ap-northeast-1 -> apne1)
     Type: String
 
   VpcCidrBlock:
+    Description: Only class B networks(172.16.0.0/16 - 172.31.0.0/16) are allowed.
     Type: String
     AllowedPattern: ^172\.(1[6-9]|2[0-9]|3[0-1])\.0.0/16
-    Description: Only class B networks(172.16.0.0/16 - 172.31.0.0/16) are allowed.
+
+Conditions:
+  NatEipAllocationCountIs3: !Equals [3, !Ref NatEipAllocationCount]
 
 Resources:
   # ----------------------------------------------------------------------------------------------------
@@ -66,10 +78,6 @@ Resources:
         - Key: Name
           Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-egress-only
       VpcId: !Ref Vpc
-
-  #FlowLog:
-  #  Type: AWS::EC2::FlowLog
-  #  Properties:
 
   VpcIpv6CidrBlock:
     Type: AWS::EC2::VPCCidrBlock
@@ -253,38 +261,74 @@ Resources:
       VpcId: !GetAtt Vpc.VpcId
     DependsOn: VpcIpv6CidrBlock
 
-  PrivateSubnetRouteTable:
+  PrivateSubnetRouteTable1:
     Type: AWS::EC2::RouteTable
     Properties:
       Tags:
         - Key: Name
-          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private-1
+      VpcId: !GetAtt Vpc.VpcId
+
+  PrivateSubnetRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private-2
+      VpcId: !GetAtt Vpc.VpcId
+
+  PrivateSubnetRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-private-3
       VpcId: !GetAtt Vpc.VpcId
 
   PrivateSubnetRouteTableAssociation1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PrivateSubnetRouteTable
+      RouteTableId: !Ref PrivateSubnetRouteTable1
       SubnetId: !Ref PrivateSubnet1
 
   PrivateSubnetRouteTableAssociation2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PrivateSubnetRouteTable
+      RouteTableId: !If
+        - NatEipAllocationCountIs3
+        - !Ref PrivateSubnetRouteTable2
+        - !Ref PrivateSubnetRouteTable1
       SubnetId: !Ref PrivateSubnet2
 
   PrivateSubnetRouteTableAssociation3:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PrivateSubnetRouteTable
+      RouteTableId: !If
+        - NatEipAllocationCountIs3
+        - !Ref PrivateSubnetRouteTable3
+        - !Ref PrivateSubnetRouteTable1
       SubnetId: !Ref PrivateSubnet3
 
-  PrivateSubnetToInternetIpv6Routing:
+  PrivateSubnetToInternetIpv6Routing1:
     Type: AWS::EC2::Route
     Properties:
       DestinationIpv6CidrBlock: ::/0
       GatewayId: !Ref EgressOnlyInternetGateway
-      RouteTableId: !Ref PrivateSubnetRouteTable
+      RouteTableId: !Ref PrivateSubnetRouteTable1
+
+  PrivateSubnetToInternetIpv6Routing2:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref EgressOnlyInternetGateway
+      RouteTableId: !Ref PrivateSubnetRouteTable2
+
+  PrivateSubnetToInternetIpv6Routing3:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref EgressOnlyInternetGateway
+      RouteTableId: !Ref PrivateSubnetRouteTable3
 
   PrivateSubnetNacl:
     Type: AWS::EC2::NetworkAcl
@@ -1117,7 +1161,9 @@ Resources:
     Type: AWS::EC2::VPCEndpoint
     Properties:
       RouteTableIds:
-        - !Ref PrivateSubnetRouteTable
+        - !Ref PrivateSubnetRouteTable1
+        - !Ref PrivateSubnetRouteTable2
+        - !Ref PrivateSubnetRouteTable3
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
       Tags:
         - Key: Name
@@ -1153,32 +1199,34 @@ Resources:
   # Elastic ip
   # ----------------------------------------------------------------------------------------------------
 
-#  NatEIP1:
-#    DeletionPolicy: Retain
-#    UpdateReplacePolicy: Retain
-#    Type: AWS::EC2::EIP
-#    Properties:
-#      Tags:
-#        - Key: Name
-#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-1
-#
-#  NatEIP2:
-#    DeletionPolicy: Retain
-#    UpdateReplacePolicy: Retain
-#    Type: AWS::EC2::EIP
-#    Properties:
-#      Tags:
-#        - Key: Name
-#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-2
-#
-#  NatEIP3:
-#    DeletionPolicy: Retain
-#    UpdateReplacePolicy: Retain
-#    Type: AWS::EC2::EIP
-#    Properties:
-#      Tags:
-#        - Key: Name
-#          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-3
+  NatEip1:
+    #DeletionPolicy: Retain
+    #UpdateReplacePolicy: Retain
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat-1
+
+  NatEip2:
+    #DeletionPolicy: Retain
+    #UpdateReplacePolicy: Retain
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat-2
+    Condition: NatEipAllocationCountIs3
+
+  NatEip3:
+    #DeletionPolicy: Retain
+    #UpdateReplacePolicy: Retain
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-nat-3
+    Condition: NatEipAllocationCountIs3
 
   # ----------------------------------------------------------------------------------------------------
   # Outputs
@@ -1194,21 +1242,21 @@ Outputs:
   VpcId:
     Value: !GetAtt Vpc.VpcId
 
-  PublicSubnetCidrBlocks:
+  PublicSubnetCidrBlockList:
     Value: !Join
       - ","
       - - !GetAtt PublicSubnet1.CidrBlock
         - !GetAtt PublicSubnet2.CidrBlock
         - !GetAtt PublicSubnet3.CidrBlock
 
-  PublicSubnetIpv6CidrBlocks:
+  PublicSubnetIpv6CidrBlockList:
     Value: !Join
       - ","
       - - !Select [0, !GetAtt PublicSubnet1.Ipv6CidrBlocks]
         - !Select [0, !GetAtt PublicSubnet2.Ipv6CidrBlocks]
         - !Select [0, !GetAtt PublicSubnet3.Ipv6CidrBlocks]
 
-  PublicSubnetIds:
+  PublicSubnetIdList:
     Value: !Join
       - ","
       - - !GetAtt PublicSubnet1.SubnetId
@@ -1218,45 +1266,52 @@ Outputs:
   PublicSubnetRouteTableId:
     Value: !GetAtt PublicSubnetRouteTable.RouteTableId
 
-  PrivateSubnetCidrBlocks:
+  PrivateSubnetCidrBlockList:
     Value: !Join
       - ","
       - - !GetAtt PrivateSubnet1.CidrBlock
         - !GetAtt PrivateSubnet2.CidrBlock
         - !GetAtt PrivateSubnet3.CidrBlock
 
-  PrivateSubnetIpv6CidrBlocks:
+  PrivateSubnetIpv6CidrBlockList:
     Value: !Join
       - ","
       - - !Select [0, !GetAtt PrivateSubnet1.Ipv6CidrBlocks]
         - !Select [0, !GetAtt PrivateSubnet2.Ipv6CidrBlocks]
         - !Select [0, !GetAtt PrivateSubnet3.Ipv6CidrBlocks]
 
-  PrivateSubnetIds:
+  PrivateSubnetIdList:
     Value: !Join
       - ","
       - - !GetAtt PrivateSubnet1.SubnetId
         - !GetAtt PrivateSubnet2.SubnetId
         - !GetAtt PrivateSubnet3.SubnetId
 
-  PrivateSubnetRouteTableId:
-    Value: !GetAtt PrivateSubnetRouteTable.RouteTableId
+  PrivateSubnetRouteTableIdList:
+    Value: !If
+      - NatEipAllocationCountIs3
+      - !Join
+        - ","
+        - - !GetAtt PrivateSubnetRouteTable1.RouteTableId
+          - !GetAtt PrivateSubnetRouteTable2.RouteTableId
+          - !GetAtt PrivateSubnetRouteTable3.RouteTableId
+      - !GetAtt PrivateSubnetRouteTable1.RouteTableId
 
-  ProtectedSubnetCidrBlocks:
+  ProtectedSubnetCidrBlockList:
     Value: !Join
       - ","
       - - !GetAtt ProtectedSubnet1.CidrBlock
         - !GetAtt ProtectedSubnet2.CidrBlock
         - !GetAtt ProtectedSubnet3.CidrBlock
 
-  ProtectedSubnetIpv6CidrBlocks:
+  ProtectedSubnetIpv6CidrBlockList:
     Value: !Join
       - ","
       - - !Select [0, !GetAtt ProtectedSubnet1.Ipv6CidrBlocks]
         - !Select [0, !GetAtt ProtectedSubnet2.Ipv6CidrBlocks]
         - !Select [0, !GetAtt ProtectedSubnet3.Ipv6CidrBlocks]
 
-  ProtectedSubnetIds:
+  ProtectedSubnetIdList:
     Value: !Join
       - ","
       - - !GetAtt ProtectedSubnet1.SubnetId
@@ -1272,9 +1327,12 @@ Outputs:
   ProtectedElasticacheSubnetGroupName:
     Value: !Ref ProtectedElasticacheSubnetGroup
 
-#  NatEIPAllocationIds:
-#    Value: !Join 
-#      - ","
-#      - - !GetAtt NatEIP1.AllocationId
-#        - !GetAtt NatEIP2.AllocationId
-#        - !GetAtt NatEIP3.AllocationId
+  NatEipAllocationIdList:
+    Value: !If
+      - NatEipAllocationCountIs3
+      - !Join
+        - ","
+        - - !GetAtt NatEip1.AllocationId
+          - !GetAtt NatEip2.AllocationId
+          - !GetAtt NatEip3.AllocationId
+      - !GetAtt NatEip1.AllocationId

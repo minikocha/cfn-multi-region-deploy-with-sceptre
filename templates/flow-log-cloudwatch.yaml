@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Environment:
+    Type: String
+
+  Project:
+    Type: String
+
+  ResourceType:
+    Type: String
+    AllowedValues:
+      - NetworkInterface
+      - Subnet
+      - VPC
+      - TransitGateway
+      - TransitGatewayAttachment
+    Default: VPC
+
+  ShortRegionCode:
+    Type: String
+
+  TrafficType:
+    Type: String
+    AllowedValues:
+      - ACCEPT
+      - ALL
+      - REJECT
+    Default: ALL
+
+  VpcId:
+    Type: String
+
+Resources:
+  LogGroup:
+    DeletionPolicy: Delete      # TODO(minikocha): 動作確認が終わったらRetainに修正する。
+    UpdateReplacePolicy: Delete # TODO(minikocha): 動作確認が終わったらRetainに修正する。
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /${Project}/${Environment}/${ShortRegionCode}/flow-log
+      RetentionInDays: 365
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: !Sub "vpc-flow-logs.${AWS::URLSuffix}"
+            Action: "sts:AssumeRole"
+      PermissionsBoundary: arn:aws:iam::308307205114:policy/security-boundary-policy # TODO(minikocha): 後で項目ごと削除
+      Policies:
+        #https://docs.aws.amazon.com/ja_jp/vpc/latest/userguide/flow-logs-iam-role.html
+        - PolicyName: put-log
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:DescribeLogGroups"
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:SourceAccount: !Ref AWS::AccountId
+                  ArnLike:
+                    aws:SourceArn: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*"
+              - Effect: "Allow"
+                Action:
+                  - "logs:DescribeLogStreams"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}"
+                Condition:
+                  StringEquals:
+                    aws:SourceAccount: !Ref AWS::AccountId
+                  ArnLike:
+                    aws:SourceArn: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*"
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}:log-stream:*"
+                Condition:
+                  StringEquals:
+                    aws:SourceAccount: !Ref AWS::AccountId
+                  ArnLike:
+                    aws:SourceArn: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*"
+      RoleName: !Sub ${Project}-${Environment}-${ShortRegionCode}-flow-log
+
+  FlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt Role.Arn
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref LogGroup
+      ResourceId: !Ref VpcId
+      ResourceType: !Ref ResourceType
+      Tags:
+        - Key: Name
+          Value: !Sub ${Project}-${Environment}-${ShortRegionCode}-cloudwatch
+      TrafficType: !Ref TrafficType
